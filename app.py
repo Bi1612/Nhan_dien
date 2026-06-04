@@ -1,445 +1,365 @@
 import cv2
 import time
+
 import modules.shared_data as shared
 
 from modules.camera_thread import CameraThread
 from modules.yolo_thread import YOLOThread
-from modules.lane_thread import LaneThread
-
-from datetime import datetime
-
-from config import *
-from modules.lane_detection import draw_lanes
-from modules.collision_warning import (
-    check_collision
+from modules.danger_zone import (
+    create_danger_zone,
+    draw_danger_zone
 )
-from modules.dashboard import draw_dashboard
-from modules.blackbox import (
-    start_recording,
-    write_frame,
-    stop_recording
+from modules.fcw import (
+    check_forward_collision
 )
-
-from modules.gps_module import read_gps
-
-from modules.speed_warning import check_speed
-
-from modules.blackbox import log_gps
-
-from modules.traffic_sign import detect_traffic_sign
-
 from modules.sensor_thread import SensorThread
+from modules.gps_thread import GPSThread
+from modules.traffic_sign import (
+    detect_traffic_sign
+)
+from modules.speed_limit_manager import (
+    update_speed_limit
+)
+from modules.speed_limit_manager import (
+    get_speed_limit
+)
+from modules.overspeed import (
+    check_overspeed
+)
+from modules.lane_detection import (
+    detect_lane_lines
+)
+from modules.lane_departure import (
+    check_lane_departure
+)
+from modules.warning_controller import (
+    get_warning_level
+)
 
-from modules.sensor_fusion import evaluate_risk
-
-from modules.drowsiness import detect_drowsiness
-
-from modules.audio_alert import play_warning
-
-from modules.ai_decision import evaluate_ai_state
-
-from modules.tracker import (
-    init_tracker,
-    update_tracker
+from modules.audio_alert import (
+    play_alert
 )
 
 camera_thread = CameraThread()
 yolo_thread = YOLOThread()
-lane_thread = LaneThread()
 sensor_thread = SensorThread()
-
+gps_thread = GPSThread()
 
 camera_thread.start()
 yolo_thread.start()
-lane_thread.start()
 sensor_thread.start()
+gps_thread.start()
 
-
-start_recording()
-
-frame_counter = 0
-
-drowsiness_status = "AWAKE"
-
-last_audio_time = 0
-    
-AUDIO_DELAY = 3
 try:
 
     while True:
 
-        sensor_distance = shared.sensor_distance
-
-        ax = shared.ax
-        ay = shared.ay
-        az = shared.az
+        start_time = time.time()
 
         if shared.frame is None:
+
             time.sleep(0.01)
+
             continue
 
         frame = shared.frame.copy()
 
-        frame_counter += 1
+        lane_status = "CENTER"
 
-        if frame_counter % 5 == 0:
+        if shared.gps_speed > 30:
 
-            drowsiness_status = detect_drowsiness(
-                frame
-            )
+            lines = detect_lane_lines(frame)
+
+            if lines is not None:
+
+                left_x = 0
+                right_x = frame.shape[1]
+
+                for line in lines:
+
+                    x1,y1,x2,y2 = line[0]
+
+                    cv2.line(
+                        frame,
+                        (x1,y1),
+                        (x2,y2),
+                        (0,255,0),
+                        2
+                    )
+
+                    if x1 < frame.shape[1]//2:
+
+                        left_x = max(
+                            left_x,
+                            x1
+                        )
+
+                    else:
+
+                        right_x = min(
+                            right_x,
+                            x1
+                        )
+
+                lane_status = check_lane_departure(
+                    left_x,
+                    right_x,
+                    frame.shape[1]
+                )
+
+        latitude = shared.latitude
+
+        longitude = shared.longitude
+
+        speed_kmh = shared.gps_speed
 
         detections = shared.detections
 
-        lines = shared.lines
+        sign = detect_traffic_sign(frame)
 
-        start_time = time.time()
+        if sign == "SPEED_30":
 
-        # Read GPS data
-        latitude, longitude, speed_kmh = read_gps()
+            update_speed_limit(30)
 
-        acceleration = (
-            ax**2 + ay**2 + az**2
-        ) ** 0.5
+        elif sign == "SPEED_50":
 
-        fusion_status = evaluate_risk(
-            sensor_distance,
-            speed_kmh,
-            acceleration
+            update_speed_limit(50)
+
+        elif sign == "SPEED_80":
+
+            update_speed_limit(80)
+
+        overspeed_status = check_overspeed(
+            shared.gps_speed
         )
 
-        log_gps(
-            latitude,
-            longitude,
-            speed_kmh
+        shared.speed_limit = get_speed_limit()
+
+        danger_zone = create_danger_zone(
+            shared.gps_speed
         )
 
-        frame = cv2.resize(
+        draw_danger_zone(
             frame,
-            (FRAME_WIDTH, FRAME_HEIGHT)
+            danger_zone
         )
 
-        tracked_box = update_tracker(frame)
+        fcw_status = check_forward_collision(
+            detections,
+            danger_zone,
+            shared.gps_speed,
+            shared.distance
+        )
 
-        # Nếu tracker mất target thì detect lại
-        if tracked_box is None and len(detections) > 0:
+        warning_level = get_warning_level(
+            fcw_status,
+            lane_status,
+            overspeed_status
+        )
 
-            largest_area = 0
-
-            best_obj = None
-
-            for obj in detections:
-
-                class_name = obj['class']
-
-                if class_name not in [
-                    "car",
-                    "bus",
-                    "truck",
-                    "motorcycle"
-                ]:
-                    continue
-
-                x1, y1, x2, y2 = map(
-                    int,
-                    obj['box']
-                )
-
-                area = (
-                    (x2 - x1) *
-                    (y2 - y1)
-                )
-
-                if area > largest_area:
-
-                    largest_area = area
-
-                    best_obj = obj
-
-            if best_obj is not None:
-
-                x1, y1, x2, y2 = map(
-                    int,
-                    best_obj['box']
-                )
-
-                bbox = (
-                    x1,
-                    y1,
-                    x2 - x1,
-                    y2 - y1
-                )
-
-                init_tracker(frame, bbox)
-
-                tracked_box = update_tracker(frame)
-
-
-        if tracked_box is not None:
-
-            x, y, w, h = map(
-                int,
-                tracked_box
-            )
-
-            cv2.rectangle(
-                frame,
-                (x, y),
-                (x + w, y + h),
-                (255, 255, 0),
-                3
-            )
-
-        # ======================================================
-        # Detect traffic signs
-        # ======================================================
-
-        sign_type, sign_box = detect_traffic_sign(frame)
-
-        if sign_type is None:
-            sign_type = "NONE"
-
-        draw_lanes(frame, lines)
-
-        person_count = 0
-        car_count = 0
-
-        nearest_distance = 999.0
-        fcw_text = "SAFE"
-
-        warning_levels = []
+        fps = 1.0 / max(
+            time.time() - start_time,
+            0.001
+        )
 
         for obj in detections:
 
-            class_name = obj['class']
+            x1,y1,x2,y2 = map(
+                int,
+                obj["box"]
+            )
 
-            if class_name not in ADAS_CLASSES:
-                continue
-
-            x1, y1, x2, y2 = map(int, obj['box'])
-
-            color = COLORS.get(class_name, (255, 255, 255))
-
-            distance = sensor_distance
-
-            if distance < nearest_distance:
-                nearest_distance = distance
-
-            collision_status = check_collision(distance)
-
-            warning_levels.append(collision_status)
+            cls = obj["class"]
 
             cv2.rectangle(
                 frame,
-                (x1, y1),
-                (x2, y2),
-                color,
+                (x1,y1),
+                (x2,y2),
+                (0,255,0),
                 2
             )
 
-            label = f"{class_name} {distance:.1f}m"
-
             cv2.putText(
                 frame,
-                label,
-                (x1, y1 - 10),
+                cls,
+                (x1,y1-10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
-                color,
+                (0,255,0),
                 2
             )
-
-            if class_name == "person":
-                person_count += 1
-
-            elif class_name == "car":
-                car_count += 1
-
-        if "DANGER" in warning_levels:
-            fcw_text = "DANGER"
-
-        elif "WARNING" in warning_levels:
-            fcw_text = "WARNING"
-
-        else:
-            fcw_text = "SAFE"
-
-        if speed_kmh is None:
-            speed_kmh = 0.0
-
-        speed_status = check_speed(speed_kmh)
-
-        lane_warning = "LANE OK"
-
-        if lines is None:
-            lane_warning = "LANE LOST"
-
-        ai_status = evaluate_ai_state(
-            fcw_text,
-            lane_warning,
-            drowsiness_status,
-            speed_status
-        )
-
-        current_audio_time = time.time()
-
-        if ai_status == "EMERGENCY":
-
-            if current_audio_time - last_audio_time > AUDIO_DELAY:
-
-                play_warning(
-                    "Collision Warning"
-                )
-
-                last_audio_time = current_audio_time
-
-
-        if ai_status == "DRIVER FATIGUE":
-
-            if current_audio_time - last_audio_time > AUDIO_DELAY:
-
-                play_warning(
-                    "Driver Drowsy"
-                )
-
-                last_audio_time = current_audio_time
-
-        # ======================================================
-        # Draw traffic sign detection
-        # ======================================================
-
-        if sign_box is not None:
-
-            x, y, w, h = sign_box
-
-            cv2.rectangle(
-                frame,
-                (x, y),
-                (x + w, y + h),
-                (0, 0, 255),
-                3
-            )
-
-            cv2.putText(
-                frame,
-                sign_type,
-                (x, y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2
-            )
-
-        
-
-        end_time = time.time()
-
-        fps = 1 / max(end_time - start_time, 0.0001)
-
-        latency = (end_time - start_time) * 1000
-
-        draw_dashboard(
-            frame,
-            fps,
-            latency,
-            car_count,
-            person_count,
-            lane_warning,
-            fcw_text,
-            nearest_distance,
-            sign_type
-        )
-
-        current_time = datetime.now().strftime("%H:%M:%S")
 
         cv2.putText(
             frame,
-            current_time,
-            (300, 30),
+            f"FCW: {fcw_status}",
+            (20,40),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
+            0.8,
+            (0,0,255),
             2
         )
 
-        if speed_status == "OVERSPEED":
+        cv2.putText(
+            frame,
+            f"Speed: {shared.gps_speed:.1f} km/h",
+            (20,80),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255,255,0),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            f"LIMIT: {shared.speed_limit}",
+            (20,120),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255,255,0),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            overspeed_status,
+            (20,160),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0,0,255),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            f"LDW: {lane_status}",
+            (20,200),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0,255,255),
+            2
+        )
+
+        if lane_status != "CENTER":
+
+            cv2.putText(
+                frame,
+                "LANE DEPARTURE",
+                (120,120),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0,0,255),
+                3
+            )
+
+        cv2.putText(
+            frame,
+            f"DIST: {shared.distance:.1f} cm",
+            (20,240),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255,255,0),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            f"AX:{shared.ax:.0f}",
+            (20,280),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255,255,0),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            f"LAT:{latitude:.4f}",
+            (20,320),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255,255,255),
+            1
+        )
+
+        cv2.putText(
+            frame,
+            f"LON:{longitude:.4f}",
+            (20,360),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255,255,255),
+            1
+        )
+
+        cv2.putText(
+            frame,
+            f"FPS:{fps:.1f}",
+            (20,380),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0,255,0),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            f"SIGN: {sign}",
+            (20,390),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0,255,255),
+            2
+        )
+
+        cv2.putText(
+            frame,
+            f"WARNING: {warning_level}",
+            (20,400),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0,0,255),
+            2
+        )
+
+        if overspeed_status == "OVERSPEED":
 
             cv2.putText(
                 frame,
                 "SLOW DOWN!",
-                (120, 200),
+                (120,200),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1.2,
-                (0, 0, 255),
+                1,
+                (0,0,255),
                 3
             )
 
-        cv2.putText(
-                frame,
-                "JETSON NANO ADAS",
-                (120, 400),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
-        
-        cv2.putText(
-                frame,
-                f"RISK: {fusion_status}",
-                (20, 320),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2
-            )
-        
-        cv2.putText(
-                frame,
-                f"ACC X:{ax:.2f}",
-                (20, 350),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255,255,0),
-                2
-            )
-        
-        cv2.putText(
-            frame,
-            f"DRIVER: {drowsiness_status}",
-            (20, 380),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 255),
-            2
+        cv2.imshow(
+            "ADAS",
+            frame
         )
 
-        cv2.imshow("ADAS SYSTEM", frame)
-
-        write_frame(frame)
-
-        key = cv2.waitKey(1)
-
-        time.sleep(0.005)
-
-        if key == ord('q'):
+        if cv2.waitKey(1) == ord("q"):
             break
 
-
 except KeyboardInterrupt:
-
-    print("Stopping ADAS...")
+    pass
 
 finally:
 
     shared.running = False
 
     camera_thread.stop()
+    
+    sensor_thread.stop()
+
+    gps_thread.stop()
 
     camera_thread.join()
+
     yolo_thread.join()
-    lane_thread.join()
+
     sensor_thread.join()
 
-    stop_recording()
+    gps_thread.join()
 
     cv2.destroyAllWindows()

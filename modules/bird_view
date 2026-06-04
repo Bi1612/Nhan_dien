@@ -1,0 +1,62 @@
+import cv2
+import numpy as np
+
+# ==========================================================
+# Bird View Transform
+# ==========================================================
+
+SRC_POINTS = np.float32([
+    [120, 300],
+    [296, 300],
+    [416, 416],
+    [0, 416]
+])
+
+DST_POINTS = np.float32([
+    [100, 0],
+    [316, 0],
+    [316, 416],
+    [100, 416]
+])
+
+H = cv2.getPerspectiveTransform(
+    SRC_POINTS,
+    DST_POINTS
+)
+
+H_INV = cv2.getPerspectiveTransform(
+    DST_POINTS,
+    SRC_POINTS
+)
+
+# ==========================================================
+# Camera -> Bird View
+# ==========================================================
+
+def to_bird_view(frame):
+
+    return cv2.warpPerspective(
+        frame,
+        H,
+        (416, 416)
+    )
+
+# ==========================================================
+# Bird View -> Camera
+# ==========================================================
+
+def bird_to_camera(points):
+
+    pts = np.array(
+        points,
+        dtype=np.float32
+    )
+
+    pts = pts.reshape(-1, 1, 2)
+
+    transformed = cv2.perspectiveTransform(
+        pts,
+        H_INV
+    )
+
+    return transformed.reshape(-1, 2)

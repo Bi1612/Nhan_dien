@@ -5,12 +5,22 @@
 
 import os
 
-# ==========================================================
-# Play warning sound
-# ==========================================================
+def play_alert(level):
 
-def play_warning(message):
+    if level == "EMERGENCY":
 
-    os.system(
-        f'espeak "{message}"'
-    )
+        os.system(
+            "aplay sounds/collision.wav &"
+        )
+
+    elif level == "LANE_WARNING":
+
+        os.system(
+            "aplay sounds/lane.wav &"
+        )
+
+    elif level == "OVERSPEED":
+
+        os.system(
+            "aplay sounds/overspeed.wav &"
+        )

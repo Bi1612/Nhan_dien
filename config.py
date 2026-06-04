@@ -1,32 +1,24 @@
 FRAME_WIDTH = 416
 FRAME_HEIGHT = 416
 
-CONFIDENCE_THRESHOLD = 0.5
+CAMERA_ID = 0
+
+CONFIDENCE_THRESHOLD = 0.40
 
 ADAS_CLASSES = [
     "person",
     "car",
-    "motorcycle",
+    "truck",
     "bus",
-    "truck"
+    "motorcycle"
 ]
 
-COLORS = {
-    "person": (0, 0, 255),
-    "car": (255, 0, 0),
-    "motorcycle": (0, 255, 255),
-    "bus": (0, 255, 0),
-    "truck": (255, 0, 255)
-}
+FCW_ENABLE_SPEED = 15.0
 
-KNOWN_CAR_WIDTH = 1.8
-FOCAL_LENGTH = 700
+FCW_TIME = 1.5
 
-COLLISION_WARNING_DISTANCE = 8
-DANGER_DISTANCE = 4
+CAR_WIDTH_M = 1.8
 
-# ==========================================================
-# Speed Warning Configuration
-# ==========================================================
+DEFAULT_SPEED_LIMIT = 50
 
-MAX_SPEED_KMH = 40
+VIDEO_FPS = 20

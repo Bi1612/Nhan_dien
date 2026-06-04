@@ -1,4 +1,5 @@
 from yoloDet import YoloTRT
+
 from config import *
 
 model = YoloTRT(
@@ -10,6 +11,8 @@ model = YoloTRT(
 
 def detect_objects(frame):
 
-    detections, t = model.Inference(frame)
+    detections, t = model.Inference(
+        frame
+    )
 
     return detections

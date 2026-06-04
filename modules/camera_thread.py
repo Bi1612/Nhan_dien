@@ -1,27 +1,19 @@
-# ==========================================================
-# File      : camera_thread.py
-# Function  : Camera capture thread
-# ==========================================================
-
 import cv2
 import threading
 
-from config import *
 import modules.shared_data as shared
 
-# ==========================================================
-# Camera capture thread
-# ==========================================================
+from config import *
 
 class CameraThread(threading.Thread):
 
     def __init__(self):
 
-        threading.Thread.__init__(self)
+        super().__init__()
 
-        self.daemon = True
-
-        self.cap = cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture(
+            CAMERA_ID
+        )
 
         self.cap.set(
             cv2.CAP_PROP_FRAME_WIDTH,
@@ -33,10 +25,6 @@ class CameraThread(threading.Thread):
             FRAME_HEIGHT
         )
 
-    # ======================================================
-    # Main camera thread loop
-    # ======================================================
-
     def run(self):
 
         while shared.running:
@@ -44,11 +32,8 @@ class CameraThread(threading.Thread):
             ret, frame = self.cap.read()
 
             if ret:
-                shared.frame = frame
 
-    # ======================================================
-    # Release camera resource
-    # ======================================================
+                shared.frame = frame
 
     def stop(self):
 

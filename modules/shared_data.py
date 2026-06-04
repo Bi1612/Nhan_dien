@@ -1,23 +1,23 @@
-# ==========================================================
-# File      : shared_data.py
-# Function  : Shared memory between ADAS threads
-# ==========================================================
+running = True
 
 frame = None
 
 detections = []
 
-lines = None
-
-sign_type = None
-sign_box = None
-
 gps_speed = 0.0
 
-running = True
+latitude = 0.0
 
-sensor_distance = 999.0
+longitude = 0.0
 
-ax = 0
-ay = 0
-az = 0
+distance = 999.0
+
+ax = 0.0
+ay = 0.0
+az = 0.0
+
+speed_limit = 50
+
+sign_type = "NONE"
+
+lane_lines = None
