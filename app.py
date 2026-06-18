@@ -1,75 +1,91 @@
+# ==============================================================================
+# HỆ THỐNG TRÍ TUỆ NHÂN TẠO HỖ TRỢ NGƯỜI KHIẾM THỊ - PHÂN HỆ ĐIỀU KHIỂN CHÍNH
+# ==============================================================================
+
 import cv2
 import time
 
-# Hằng số cấu hình hệ thống lượng giác 4 mét hỗ trợ người khiếm thị
-FOCAL_LENGTH = 350       # Tiêu cự camera hành trình sau khi hiệu chuẩn (Calibration)
-REAL_HEIGHT_PERSON = 1.6 # Chiều cao thực tế trung bình của đối tượng (mét)
+import modules.shared_data as shared
 
-# Biến toàn cục cục bộ để lưu vết lịch sử khoảng cách phục vụ bài toán của cô giáo
-history_dist = None
+from modules.camera_thread import CameraThread
+from modules.yolo_thread import YOLOThread
+from modules.fcw import check_forward_collision
+from modules.sensor_thread import SensorThread
+from modules.warning_controller import get_warning_level
+from modules.audio_alert import play_alert
 
-def estimate_distance_and_angle(obj, im_width=416):
-    """Tính toán khoảng cách (m) và góc lệch (độ) từ Bounding Box của YOLOv5"""
-    x1, y1, x2, y2 = map(int, obj["box"])
-    h_pixel = max(y2 - y1, 1) # Tránh lỗi chia cho 0
-    x_center = (x1 + x2) / 2
-    
-    # Công thức tỷ lệ nghịch hình học máy tính
-    distance_cam = (FOCAL_LENGTH * REAL_HEIGHT_PERSON) / h_pixel
-    # Tính góc lệch so với trục trung tâm camera (Đổi sang độ)
-    angle = ((x_center - (im_width / 2)) / FOCAL_LENGTH) * 57.2958
-    return distance_cam, angle
+# ------------------------------------------------------------------------------
+# KHỞI TẠO VÀ KÍCH HOẠT CÁC LUỒNG NGOẠI VI (CAMERA & SIÊU ÂM ARDUINO)
+# ------------------------------------------------------------------------------
+camera_thread = CameraThread()
+yolo_thread = YOLOThread()
+sensor_thread = SensorThread()
 
-def check_forward_collision(detections, zone, speed_kmh, distance_sonar_cm):
-    """
-    Hàm được kế thừa từ ADAS gốc nhưng được refactor lại toàn diện:
-    1. Bỏ hoàn toàn ràng buộc tốc độ xe di chuyển.
-    2. Thực hiện kết hợp cảm biến (Sensor Fusion) đo cự ly và phân biệt vật thể Tĩnh / Động.
-    """
-    global history_dist
-    
-    if not detections:
-        # Nếu không có vật thể, reset lại lịch sử theo dõi
-        history_dist = None
-        return "SAFE"
+camera_thread.start()
+yolo_thread.start()
+sensor_thread.start()
 
-    # Đổi dữ liệu siêu âm Arduino từ cm sang mét
-    distance_sonar_m = distance_sonar_cm / 100.0
+print("[HỆ THỐNG] Đã khởi động các luồng cảm biến. Sẵn sàng thử nghiệm bài toán 4 mét.")
 
-    for obj in detections:
-        cls = obj["class"]
-        
-        # Chỉ nhận diện các class vật cản gây nguy hiểm cho người đi bộ
-        if cls not in ["person", "car", "truck", "bus", "motorcycle"]:
+try:
+    # --------------------------------------------------------------------------
+    # VÒNG LẶP XỬ LÝ CHÍNH TRÊN JETSON NANO (MAIN CONTROL LOOP)
+    # --------------------------------------------------------------------------
+    while True:
+        start_time = time.time()
+
+        if shared.frame is None:
+            time.sleep(0.01)
             continue
 
-        # Trích xuất khoảng cách và góc lệch toán học từ camera hành trình
-        distance_cam, angle = estimate_distance_and_angle(obj, im_width=416)
-        
-        # Chỉ xử lý trong phạm vi tối đa 4 mét (Giới hạn hoạt động ổn định của siêu âm)
-        if distance_cam <= 4.0:
-            
-            # KIỂM TRA BÀI TOÁN CỦA CÔ GIÁO:
-            # Nếu trước đó hệ thống đã từng ghi nhận vật thể xuất hiện ở vùng biên ~4 mét
-            if history_dist is not None and (3.7 <= history_dist <= 4.3):
-                # Kịch bản: Người mù chủ động bước tiến về phía trước 2 mét
-                # Khoảng cách lý thuyết mới đến vật thể nếu nó đứng im cố định phải là 2 mét
-                expected_dist = history_dist - 2.0 
-                
-                # Tính toán cự ly thực tế tích hợp từ hai cảm biến (Sensor Fusion)
-                current_real_dist = (distance_cam + distance_sonar_m) / 2.0
-                
-                # Kiểm tra sai số lệch ngưỡng cho phép 0.35 mét
-                if abs(current_real_dist - expected_dist) <= 0.35:
-                    print(f"[LOG] Vat can TINH o goc {angle:.1f} do, cach {current_real_dist:.1f}m.")
-                    return "DANGER" # Gửi tín hiệu nguy hiểm vật cản tĩnh cản lối đi
-                else:
-                    print(f"[LOG] Vat can DONG o goc {angle:.1f} do dang di chuyen.")
-                    return "WARNING" # Vật thể động đang di chuyển né tránh vỉa hè
-            else:
-                # Lưu vết lịch sử khi vật thể lọt vào vùng biên 4 mét lần đầu tiên
-                history_dist = distance_cam
-                print(f"[LOG] Muc tieu vao vung bien 4m: goc {angle:.1f} do")
-                return "WARNING"
+        # Tạo bản sao cục bộ để tránh hiện tượng Race Condition khi đa luồng cập nhật
+        frame = shared.frame.copy()
+        detections = shared.detections
 
-    return "SAFE"
+        # Gọi thuật toán kết hợp cảm biến (Sensor Fusion) xử lý bài toán 4m của cô giáo
+        # Bỏ qua tham số vùng đa giác hình học cũ của ô tô (truyền None)
+        fcw_status = check_forward_collision(
+            detections,
+            None, 
+            shared.gps_speed,
+            shared.distance
+        )
+
+        # Bộ điều khiển trung tâm ra quyết định trạng thái còi báo động
+        warning_level = get_warning_level(fcw_status)
+
+        # Tính toán tần suất đáp ứng xử lý khung hình tại biên (FPS)
+        fps = 1.0 / max(time.time() - start_time, 0.001)
+
+        # --------------------------------------------------------------------------
+        # ĐỒ HỌA TRỰC QUAN HÓA OVERLAY PHỤC VỤ QUÁ TRÌNH PHÒNG THÍ NGHIỆM
+        # --------------------------------------------------------------------------
+        for obj in detections:
+            x1, y1, x2, y2 = map(int, obj["box"])
+            cls = obj["class"]
+
+            if cls in ["person", "car", "truck", "bus", "motorcycle"]:
+                # Vẽ khung bọc định vị đối tượng
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, cls, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        # Hiển thị Telemetry trạng thái lên màn hình điều khiển
+        cv2.putText(frame, f"KICH BAN CO GIAO: {fcw_status}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(frame, f"WARNING LEVEL: {warning_level}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        cv2.putText(frame, f"SIEU AM: {shared.distance:.1f} cm", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        cv2.putText(frame, f"HE THONG SYSTEM FPS: {fps:.1f}", (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
+
+        # Hiển thị luồng video xử lý lên màn hình giám sát để theo dõi cự ly pixel Bounding Box
+        cv2.imshow("Blind Support System Test", frame)
+        
+        # Nhấn phím 'q' trên bàn phím kết nối Jetson Nano để thoát chương trình an toàn
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+except KeyboardInterrupt:
+    print("[HỆ THỐNG] Ngắt chương trình bằng bàn phím.")
+
+finally:
+    shared.running = False
+    cv2.destroyAllWindows()
+    print("[HỆ THỐNG] Đã giải phóng tài nguyên phần cứng an toàn.")
