@@ -1,6 +1,10 @@
 # ==============================================================================
 # HỆ THỐNG TRÍ TUỆ NHÂN TẠO HỖ TRỢ NGƯỜI KHIẾM THỊ - PHÂN HỆ ĐIỀU KHIỂN CHÍNH
 # ==============================================================================
+# Tệp tin: app.py
+# Mô tả: Điều phối luồng dữ liệu từ Camera, Cảm biến siêu âm và mô hình YOLOv5 TensorRT.
+#        Áp dụng cơ chế khởi chạy giãn cách luồng để tối ưu hóa tài nguyên RAM/GPU.
+# ==============================================================================
 
 import cv2
 import time
@@ -14,17 +18,33 @@ from modules.sensor_thread import SensorThread
 from modules.warning_controller import get_warning_level
 
 # ------------------------------------------------------------------------------
-# KHỞI TẠO VÀ KÍCH HOẠT CÁC LUỒNG NGOẠI VI (CAMERA & SIÊU ÂM ARDUINO)
+# KHỞI TẠO CÁC ĐỐI TƯỢNG LUỒNG (THREADS INITIALIZATION)
 # ------------------------------------------------------------------------------
 camera_thread = CameraThread()
 yolo_thread = YOLOThread()
 sensor_thread = SensorThread()
 
-camera_thread.start()
-yolo_thread.start()
-sensor_thread.start()
+# ------------------------------------------------------------------------------
+# CƠ CHẾ KHỞI CHẠY GIÃN CÁCH LUỒNG (THREAD BOOTING DELAY FOR TENSORRT)
+# ------------------------------------------------------------------------------
+print("\n" + "="*60)
+print("[HỆ THỐNG] BẮT ĐẦU KHỞI ĐỘNG PHÂN HỆ HỖ TRỢ NGƯỜI MÙ...")
+print("="*60)
 
-print("[HỆ THỐNG] Đã khởi động các luồng cảm biến. Sẵn sàng thử nghiệm bài toán 4 mét.")
+# Bước 1: Kích hoạt luồng YOLO để nạp mô hình TensorRT .engine nặng vào GPU trước
+yolo_thread.start()
+print("[HỆ THỐNG] Đang tiến hành nạp mô hình YOLOv5n TensorRT vào GPU...")
+print("[HỆ THỐNG] Vui lòng đợi từ 5 - 7 giây để hệ thống phân phối bộ nhớ RAM/Swap...")
+
+# Ép chương trình chính tạm dừng 7 giây để luồng phụ YOLOThread hoàn thành việc load model
+time.sleep(7) 
+
+# Bước 2: Sau khi mô hình đã nạp xong xuôi, mới kích hoạt Camera và Cảm biến siêu âm Arduino
+print("[HỆ THỐNG] Mô hình AI sẵn sàng! Tiến hành kích hoạt các luồng ngoại vi...")
+camera_thread.start()
+sensor_thread.start()
+print("[HỆ THỐNG] Tất cả các luồng đã hoạt động thông suốt. Bắt đầu vòng lặp chính.")
+print("="*60 + "\n")
 
 try:
     # --------------------------------------------------------------------------
@@ -33,6 +53,7 @@ try:
     while True:
         start_time = time.time()
 
+        # Cơ chế đồng bộ: Chờ cho đến khi Camera Thread nạp dữ liệu frame đầu tiên.
         if shared.frame is None:
             time.sleep(0.01)
             continue
@@ -49,10 +70,10 @@ try:
             shared.distance
         )
 
-        # Bộ điều khiển trung tâm ra quyết định trạng thái còi báo động
+        # Bộ điều khiển trung tâm ra quyết định trạng thái còi báo động cho người mù
         warning_level = get_warning_level(fcw_status)
 
-        # Tính toán tần suất đáp ứng xử lý khung hình tại biên (FPS)
+        # Tính toán tần suất đáp ứng xử lý khung hình tại biên (Hệ thống FPS)
         fps = 1.0 / max(time.time() - start_time, 0.001)
 
         # --------------------------------------------------------------------------
@@ -62,18 +83,18 @@ try:
             x1, y1, x2, y2 = map(int, obj["box"])
             cls = obj["class"]
 
+            # Chỉ vẽ khung bọc cho các class cần thiết phục vụ người đi bộ
             if cls in ["person", "car", "truck", "bus", "motorcycle"]:
-                # Vẽ khung bọc định vị đối tượng màu xanh lá
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, cls, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        # Hiển thị Telemetry trạng thái thực nghiệm lên màn hình 7 inch
+        # Hiển thị thông số thực nghiệm độc lập cho bài toán người mù lên giao diện 7 inch
         cv2.putText(frame, f"KICH BAN CO GIAO: {fcw_status}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         cv2.putText(frame, f"WARNING LEVEL: {warning_level}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
         cv2.putText(frame, f"SIEU AM: {shared.distance:.1f} cm", (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         cv2.putText(frame, f"HE THONG SYSTEM FPS: {fps:.1f}", (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
 
-        # Hiển thị luồng video xử lý lên màn hình giám sát 7 inch
+        # Đẩy luồng hình ảnh hiển thị trực tiếp lên màn hình giám sát 7 inch
         cv2.imshow("Blind Support System Test", frame)
         
         # Nhấn phím 'q' trên bàn phím kết nối Jetson Nano để thoát chương trình an toàn
@@ -81,9 +102,10 @@ try:
             break
 
 except KeyboardInterrupt:
-    print("[HỆ THỐNG] Ngắt chương trình bằng bàn phím.")
+    print("[HỆ THỐNG] Ngắt chương trình bằng tổ hợp phím bàn phím.")
 
 finally:
+    # Hạ cờ chạy ngầm để dọn dẹp và giải phóng tài nguyên hệ thống
     shared.running = False
     cv2.destroyAllWindows()
-    print("[HỆ THỐNG] Đã giải phóng tài nguyên phần cứng an toàn.")
+    print("[HỆ THỐNG] Đã giải phóng toàn bộ tài nguyên phần cứng an toàn. Kết thúc.")
