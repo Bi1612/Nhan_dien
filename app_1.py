@@ -1,5 +1,9 @@
 # ==============================================================================
-# HỆ THỐNG TRỢ GIÚP NGƯỜI MÙ - CHU KỲ XỬ LÝ TRUNG TÂM
+# HỆ THỐNG TRỢ GIÚP NGƯỜI MÙ - CHU KỲ XỬ LÝ TRUNG TÂM (MAIN LOOP)
+# ==============================================================================
+# Tệp tin: app_1.py
+# Mô tả: Chu kỳ trung tâm xử lý góc lệch và theo dõi khoảng cách di chuyển 2m
+#        để phân biệt vật cản Tĩnh/Động phục vụ bài toán hỗ trợ người mù.
 # ==============================================================================
 
 import cv2
@@ -10,16 +14,15 @@ import modules.shared_data as shared
 from modules.camera_thread import CameraThread
 from modules.yolo_thread import YOLOThread
 from modules.sensor_thread import SensorThread
-# Luồng GPS giữ lại để dùng dữ liệu thời gian hoặc ước lượng (nếu cần), hoặc dùng làm bộ đếm
-from modules.gps_thread import GPSThread 
+from modules.gps_thread import GPSThread
 
-# Import module phân tích động học mới tạo phục vụ yêu cầu của cô
+# Import bộ phân tích động học mốc 2 mét của người mù
 from modules.object_tracking_analyzer import BlindAssistantAnalyzer
 
-# Import module âm thanh giọng nói
-from modules.audio_alert import play_voice_alert 
+# Import bộ xử lý phát âm thanh giọng nói (TTS)
+from modules.audio_alert import play_voice_alert
 
-# Kích hoạt các luồng đọc phần cứng chạy song song
+# Khởi kích các luồng phần cứng ngoại vi chạy song song
 camera_thread = CameraThread()
 yolo_thread = YOLOThread()
 sensor_thread = SensorThread()
@@ -30,69 +33,78 @@ yolo_thread.start()
 sensor_thread.start()
 gps_thread.start()
 
-# Khởi tạo bộ não phân tích trạng thái Tĩnh/Động của vật cản cho người mù
+# Khởi tạo thực thể phân tích trạng thái vật cản
 blind_analyzer = BlindAssistantAnalyzer()
+
+print("[INFO] He thong ho tro nguoi mu dang chay...")
 
 try:
     while True:
+        # Cơ chế đồng bộ: Chờ luồng Camera nạp frame đầu tiên
         if shared.frame is None:
             time.sleep(0.01)
             continue
 
+        # Sao chép dữ liệu cục bộ tránh Race Condition
         frame = shared.frame.copy()
-        detections = shared.detections # Lấy kết quả bbox + track_id từ YOLO
-        distance_cm = shared.distance   # Lấy khoảng cách từ cảm biến siêu âm
+        detections = shared.detections
+        distance_cm = shared.distance
 
         # --------------------------------------------------------------------------
-        # THỰC THI THUẬT TOÁN THEO YÊU CẦU CỦA CÔ ĐỐI VỚI BÀI TOÁN NGƯỜI MÙ
+        # XỬ LÝ LOGIC THEO DÕI ĐỘNG HỌC (YÊU CẦU CỦA CÔ)
         # --------------------------------------------------------------------------
-        # Xử lý tính toán góc lệch, theo dõi mốc di chuyển 2 mét để phân loại vật cản
+        # Tính toán góc alpha và theo dõi mốc di chuyển 2 mét để phân loại vật cản
         tracked_obstacles = blind_analyzer.process_pedestrian_movement(
             detections=detections,
             current_distance_cm=distance_cm
         )
 
-        # Vòng lặp kiểm tra kết quả phân tích để đưa ra khẩu lệnh âm thanh (TTS)
+        # Quét trạng thái để đưa ra khẩu lệnh giọng nói kịp thời
         for track_id, obstacle in tracked_obstacles.items():
-            # Nếu hệ thống vừa phân loại xong trạng thái STATIC hoặc DYNAMIC của đối tượng
             if "alert_phrase" in obstacle and obstacle["status"] in ["STATIC", "DYNAMIC"]:
-                # Gọi hàm phát âm thanh (Ví dụ: "Phát hiện người di động, bên phải")
+                # Gọi hạ tầng phát âm thanh không nghẽn luồng chính
                 play_voice_alert(obstacle["alert_phrase"])
-                # Xóa cụm từ cảnh báo sau khi đọc để tránh phát lặp đi lặp lại vô tận
-                del obstacle["alert_phrase"] 
+                # Xóa câu lệnh thoại sau khi phát để tránh lặp âm liên tục
+                del obstacle["alert_phrase"]
 
         # --------------------------------------------------------------------------
-        # GIAO DIỆN MONITORING (Dành cho bạn và cô giáo theo dõi lúc nghiệm thu)
+        # GIAO DIỆN DEBUG TRỰC QUAN HÓA (MÀN HÌNH KIỂM TRA CHO CÔ XEM)
         # --------------------------------------------------------------------------
         for track_id, obstacle in tracked_obstacles.items():
-            # Lấy tọa độ hiển thị hộp bao (nếu đối tượng đang xuất hiện trong khung hình)
-            # Bạn cần đảm bảo luồng YOLO của bạn trả về cấu trúc gồm cả box và track_id
             for obj in detections:
                 if obj.get("track_id") == track_id:
                     x1, y1, x2, y2 = map(int, obj["box"])
                     
-                    # Đổi màu sắc hiển thị dựa trên trạng thái tĩnh hay động để trực quan hóa
-                    color = (0, 255, 0) # Mặc định màu xanh
-                    if obstacle["status"] == "STATIC": color = (255, 0, 0) # Tĩnh - Xanh dương
-                    elif obstacle["status"] == "DYNAMIC": color = (0, 0, 255) # Động - Đỏ
-                    
+                    # Phân biệt màu khung dựa trên trạng thái vật cản
+                    if obstacle["status"] == "STATIC":
+                        color = (255, 0, 0)   # Xanh dương: Vật cản tĩnh cố định
+                    elif obstacle["status"] == "DYNAMIC":
+                        color = (0, 0, 255)   # Đỏ: Nguy hiểm, vật cản di động
+                    else:
+                        color = (0, 255, 0)   # Xanh lá: Đang trong mốc lấy mẫu đo đạc
+
+                    # Vẽ khung bao đối tượng
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                     
-                    # Hiện thị nhãn trạng thái và góc lệch ngay trên màn hình debug
-                    status_text = f"ID:{track_id} {obstacle['class']} [{obstacle['status']}]"
-                    cv2.putText(frame, status_text, (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                    cv2.putText(frame, f"Goc: {obstacle.get('current_angle', 0):.1f}deg", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                    # Vẽ nhãn trạng thái và góc lệch Yaw thực tế
+                    label_text = f"ID:{track_id} {obstacle['class']} [{obstacle['status']}]"
+                    cv2.putText(frame, label_text, (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    cv2.putText(frame, f"Goc: {obstacle.get('current_angle', 0):.1f} deg", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-        # Hiển thị dữ liệu cảm biến siêu âm ở góc màn hình góc để đối chiếu
+        # Hiển thị thông số khoảng cách từ gậy siêu âm thời gian thực lên góc màn hình
         cv2.putText(frame, f"Sieu am DIST: {distance_cm:.1f} cm", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
+        # Đẩy khung hình ra màn hình hiển thị
         cv2.imshow("He thong ho tro nguoi mu - Giao dien kiem tra", frame)
 
+        # Cơ chế dừng bằng phím điều hướng an toàn
         if cv2.waitKey(1) == ord("q"):
             break
 
 except KeyboardInterrupt:
-    print("\n[INFO] Dung he thong...")
+    print("\n[INFO] Nhan tin hieu ngat. Dang dung he thong...")
 
 finally:
+    # Giải phóng tài nguyên đồ họa khi dừng
     cv2.destroyAllWindows()
+    print("[INFO] He thong da dung an toan.")
