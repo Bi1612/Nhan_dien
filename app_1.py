@@ -8,9 +8,6 @@ from modules.yolo_thread import YOLOThread
 from modules.sensor_thread import SensorThread
 from modules.gps_thread import GPSThread
 
-# Đã khóa dòng này bằng dấu # vì đề tài người mù không dùng thuật toán hình chiếu ADAS cũ
-# from modules.bird import ...
-
 from modules.danger_zone import (
     create_danger_zone,
     draw_danger_zone
@@ -57,46 +54,46 @@ while True:
 
     for obj in detections:
 
-        x1,y1,x2,y2 = map(
+        x1, y1, x2, y2 = map(
             int,
             obj["box"]
         )
 
         cv2.rectangle(
             frame,
-            (x1,y1),
-            (x2,y2),
-            (0,255,0),
+            (x1, y1),
+            (x2, y2),
+            (0, 255, 0),
             2
         )
 
     cv2.putText(
         frame,
         f"FCW:{fcw_status}",
-        (20,40),
+        (20, 40),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,
-        (0,0,255),
+        (0, 0, 255),
         2
     )
 
     cv2.putText(
         frame,
         f"DIST:{shared.distance:.1f} cm",
-        (20,80),
+        (20, 80),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
-        (255,255,0),
+        (255, 255, 0),
         2
     )
 
     cv2.putText(
         frame,
         f"SPEED:{shared.gps_speed:.1f}",
-        (20,120),
+        (20, 120),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
-        (255,255,0),
+        (255, 255, 0),
         2
     )
 
@@ -105,5 +102,5 @@ while True:
         frame
     )
 
-    if cv2.waitKey(1)==ord("q"):
+    if cv2.waitKey(1) == ord("q"):
         break
