@@ -8,29 +8,31 @@ class YOLOThread(threading.Thread):
     def __init__(self):
         super(YOLOThread, self).__init__()
         self.running = True
-        # Cách này không cần thư viện ultralytics, chỉ cần torch
-        # Đảm bảo bồ có file 'yolov5s.pt' trong thư mục này
+        # CHẮC CHẮN KHỞI TẠO BIẾN Ở ĐÂY
+        self.model = None 
         try:
+            print("[AI] Đang load model...")
             self.model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
             self.model.eval()
+            print("[AI] Load model thành công!")
         except Exception as e:
-            print(f"Lỗi khởi tạo model: {e}")
+            print(f"[AI] Lỗi khởi tạo model: {e}")
         
     def run(self):
         while self.running:
-            if shared.frame is not None:
+            # Kiểm tra self.model đã tồn tại chưa trước khi dùng
+            if self.model is not None and shared.frame is not None:
                 frame = shared.frame.copy()
-                # Chạy detect
                 results = self.model(frame)
                 
-                # Cập nhật kết quả
                 shared.detections = []
-                for det in results.xyxy[0]:
-                    x1, y1, x2, y2, conf, cls = det
-                    if conf > 0.4: # Ngưỡng tin cậy
+                # Trích xuất kết quả
+                pred_df = results.pandas().xyxy[0]
+                for _, row in pred_df.iterrows():
+                    if row['confidence'] > 0.4:
                         shared.detections.append({
-                            "box": [x1, y1, x2, y2],
-                            "class": "person" if int(cls) == 0 else "object"
+                            "box": [row['xmin'], row['ymin'], row['xmax'], row['ymax']],
+                            "class": row['name']
                         })
                 time.sleep(0.05)
             else:
