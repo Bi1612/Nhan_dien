@@ -2,42 +2,37 @@ import threading
 import torch
 import cv2
 import time
-import numpy as np
 import modules.shared_data as shared
 
 class YOLOThread(threading.Thread):
     def __init__(self):
         super(YOLOThread, self).__init__()
         self.running = True
-        # Cách nạp mô hình "bất tử": dùng thư viện torch cơ bản
-        # Bồ để file yolov5s.pt trong thư mục project là được
-        self.model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
-        self.model.conf = 0.40
+        # Cách này không cần thư viện ultralytics, chỉ cần torch
+        # Đảm bảo bồ có file 'yolov5s.pt' trong thư mục này
+        try:
+            self.model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+            self.model.eval()
+        except Exception as e:
+            print(f"Lỗi khởi tạo model: {e}")
         
     def run(self):
         while self.running:
             if shared.frame is not None:
                 frame = shared.frame.copy()
-                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # Chạy detect
+                results = self.model(frame)
                 
-                # Chạy inference
-                results = self.model(img_rgb)
-                
-                # Lấy kết quả dưới dạng dataframe
-                df = results.pandas().xyxy[0]
-                
-                detections = []
-                for _, row in df.iterrows():
-                    # Chỉ lọc người (person) hoặc vật cản cần thiết
-                    if row['name'] in ["person", "car", "bicycle"]:
-                        detections.append({
-                            "box": [row['xmin'], row['ymin'], row['xmax'], row['ymax']],
-                            "class": row['name'],
-                            "confidence": float(row['confidence'])
+                # Cập nhật kết quả
+                shared.detections = []
+                for det in results.xyxy[0]:
+                    x1, y1, x2, y2, conf, cls = det
+                    if conf > 0.4: # Ngưỡng tin cậy
+                        shared.detections.append({
+                            "box": [x1, y1, x2, y2],
+                            "class": "person" if int(cls) == 0 else "object"
                         })
-                
-                shared.detections = detections
-                time.sleep(0.03) # Giới hạn 30FPS để không lag
+                time.sleep(0.05)
             else:
                 time.sleep(0.1)
 
