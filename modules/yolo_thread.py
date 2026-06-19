@@ -1,39 +1,50 @@
 import threading
-import time
+import torch
 import cv2
-import pycuda.driver as cuda # Thư viện quản lý tài nguyên GPU
-
+import time
 import modules.shared_data as shared
-from modules.detection import detect_objects
 
 class YOLOThread(threading.Thread):
     def __init__(self):
-        super().__init__()
-        self.daemon = True
-        # LẤY CHÍNH XÁC ngữ cảnh CUDA đang hoạt động tại luồng chính khởi tạo mô hình
-        self.ctx = cuda.Context.get_current()
-
+        super(YOLOThread, self).__init__()
+        self.running = True
+        # Load mô hình YOLOv5 từ bộ nhớ cache hoặc tải mới
+        print("[AI ENGINE] Đang khởi tạo mô hình...")
+        self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', pretrained=True)
+        self.model.conf = 0.40  # Ngưỡng nhận diện
+        
     def run(self):
-        # Đẩy ngữ cảnh dùng chung của luồng chính vào luồng phụ phụ trách YOLOv5
-        if self.ctx:
-            self.ctx.push()
+        while self.running:
+            if shared.frame is not None:
+                # Lấy ảnh từ luồng chung
+                frame = shared.frame.copy()
+                
+                # Chuyển hệ màu để chạy AI
+                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # Thực hiện nhận diện
+                results = self.model(img_rgb)
+                
+                # Trích xuất kết quả dạng bảng
+                df = results.pandas().xyxy[0]
+                
+                detections = []
+                for _, row in df.iterrows():
+                    # Chỉ lọc các vật thể quan trọng cho người mù
+                    if row['name'] in ["person", "car", "motorcycle", "bicycle", "bus", "truck"]:
+                        detections.append({
+                            "box": [row['xmin'], row['ymin'], row['xmax'], row['ymax']],
+                            "class": row['name'],
+                            "confidence": float(row['confidence'])
+                        })
+                
+                # Cập nhật kết quả vào biến chung
+                shared.detections = detections
+                
+                # Thêm khoảng nghỉ để CPU của Jetson Nano không bị quá tải
+                time.sleep(0.05) 
+            else:
+                time.sleep(0.1)
 
-        while shared.running:
-            if shared.frame is None:
-                time.sleep(0.01)
-                continue
-
-            start_time = time.time()
-            frame = shared.frame.copy()
-            frame = cv2.resize(frame, (416, 416))
-
-            # Thực hiện suy luận nhận diện thời gian thực trên bộ nhớ an toàn
-            detections = detect_objects(frame)
-            shared.detections = detections
-
-            elapsed = time.time() - start_time
-            shared.yolo_fps = 1.0 / max(elapsed, 0.001)
-
-        # Giải phóng tài nguyên khi luồng kết thúc
-        if self.ctx:
-            self.ctx.pop()
+    def stop(self):
+        self.running = False
