@@ -8,6 +8,9 @@ from modules.yolo_thread import YOLOThread
 from modules.sensor_thread import SensorThread
 from modules.gps_thread import GPSThread
 
+# Đã khóa dòng này bằng dấu # vì đề tài người mù không dùng thuật toán hình chiếu ADAS cũ
+# from modules.bird import ...
+
 from modules.danger_zone import (
     create_danger_zone,
     draw_danger_zone
