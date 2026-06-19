@@ -1,31 +1,24 @@
-import cv2
 import threading
+import cv2
 import modules.shared_data as shared
 
 class CameraThread(threading.Thread):
     def __init__(self):
-        super().__init__()
-        self.daemon = True
-        
-        # Đã cấu hình chính xác sang Index 1 theo phần cứng Jetson Nano của bạn
-        self.cap = cv2.VideoCapture(1)
-        
-        # Cấu hình độ phân giải khung hình chuẩn cho mạng YOLOv5 TensorRT
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 416)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 416)
+        super(CameraThread, self).__init__()
+        # Ép cứng cổng số 1 tương ứng với cổng USB webcam thật trên Jetson Nano
+        self.cap = cv2.VideoCapture(1) 
+        self.stopped = False
 
     def run(self):
-        print("[CAMERA] Luong doc Camera USB da bat dau hoat dong.")
-        while shared.running:
+        while not self.stopped:
             ret, frame = self.cap.read()
-            if not ret:
-                print("[CAMERA] Canh bao: Khong the doc duoc khung hinh tu thiet bi!")
-                continue
-            
-            # Đẩy khung hình thô vào vùng nhớ chia sẻ chung toàn cục
-            shared.frame = frame
+            if ret:
+                shared.frame = frame
+            else:
+                print("[CAMERA ERROR] Không đọc được luồng dữ liệu từ Webcam!")
+            cv2.waitKey(10)
 
     def stop(self):
-        if self.cap.is_opened():
+        self.stopped = True
+        if self.cap.isOpened():
             self.cap.release()
-        print("[CAMERA] Da giai phong thiet bi camera an toan.")
