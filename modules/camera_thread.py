@@ -1,24 +1,30 @@
-import threading
 import cv2
+import threading
+
 import modules.shared_data as shared
+from config import *
 
 class CameraThread(threading.Thread):
+
     def __init__(self):
-        super(CameraThread, self).__init__()
-        # Ép cứng cổng số 1 tương ứng với cổng USB webcam thật trên Jetson Nano
-        self.cap = cv2.VideoCapture(1) 
-        self.stopped = False
+        super().__init__()
+        # Đọc tham số ID và kích thước từ file cấu hình hệ thống config của bạn
+        self.cap = cv2.VideoCapture(CAMERA_ID)
+
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+        self.running = True
 
     def run(self):
-        while not self.stopped:
+        print("[INFO] Luồng Camera thu thập hình ảnh đã sẵn sàng...")
+        while shared.running and self.running:
             ret, frame = self.cap.read()
             if ret:
                 shared.frame = frame
             else:
-                print("[CAMERA ERROR] Không đọc được luồng dữ liệu từ Webcam!")
-            cv2.waitKey(10)
+                time.sleep(0.01) # Chờ nếu camera bận
 
     def stop(self):
-        self.stopped = True
+        self.running = False
         if self.cap.isOpened():
             self.cap.release()
