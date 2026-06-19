@@ -55,8 +55,8 @@ class ObjectAnalyzer:
                     
                     # So sánh khoảng cách đo thực tế d_current với khoảng cách lý thuyết expected_distance
                     if abs(d_current - expected_distance) < 0.4: # Sai số cho phép 40cm
-                        obj["status"] = "STATIC_OBSTACLE" (Vật cản tĩnh)
+                        obj["status"] = "STATIC_OBSTACLE" #(Vật cản tĩnh)
                     else:
-                        obj["status"] = "DYNAMIC_OBJECT" (Vật thể di động)
+                        obj["status"] = "DYNAMIC_OBJECT" #(Vật thể di động)
                         
         return self.tracked_objects
