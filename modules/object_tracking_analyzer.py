@@ -1,62 +1,82 @@
-# modules/object_tracker_analyzer.py
-import math
+# ==============================================================================
+# PHÂN HỆ THEO DÕI VÀ PHÂN TÍCH ĐỘNG HỌC VẬT CẢN CHO NGƯỜI MÙ
+# ==============================================================================
+# Tệp tin: object_tracking_analyzer.py
+# ==============================================================================
+
 import time
 
-class ObjectAnalyzer:
+class BlindAssistantAnalyzer:
     def __init__(self):
-        # Lưu trữ trạng thái vật thể: {track_id: {"first_d":, "moved_dist":, "last_time":}}
-        self.tracked_objects = {} 
-        self.fov_horizontal = 60.0 # Cấu hình tùy theo Camera của bạn
-        self.image_width = 640     # Cấu hình theo độ phân giải frame
+        self.tracked_obstacles = {}
+        self.fov_horizontal = 70.0  # Góc quét camera
+        self.image_width = 640
+        self.walking_speed = 1.1    # Tốc độ đi bộ mặc định (1.1 m/s)
 
-    def calculate_angle(self, bbox_x_center):
-        # Tính góc lệch alpha so với tâm trục chính của xe
-        center_img = self.image_width / 2
-        angle = (bbox_x_center - center_img) * (self.fov_horizontal / self.image_width)
-        return angle # Đơn vị: Độ (Âm là bên trái, Dương là bên phải)
+    def get_direction_label(self, angle):
+        if angle < -15: return "Ben trai"
+        elif angle > 15: return "Ben phai"
+        return "Chinh dien"
 
-    def update_and_check(self, current_detections, current_distance, gps_speed):
-        """
-        current_detections: Danh sách các đối tượng từ YOLO gồm [x_center, y_center, track_id, class_name]
-        current_distance: Khoảng cách từ cảm biến siêu âm (cm hoặc m)
-        gps_speed: Vận tốc xe từ GPS (m/s)
-        """
+    def process_pedestrian_movement(self, detections, current_distance_cm):
         current_time = time.time()
-        
-        for det in current_detections:
-            x_c, y_c, track_id, label = det
-            angle = self.calculate_angle(x_c)
+        d_current_m = current_distance_cm / 100.0  # Đổi sang mét
+
+        # 1. Cập nhật ước lượng quãng đường người mù đã đi bộ (Delta s)
+        for track_id, data in list(self.tracked_obstacles.items()):
+            dt = current_time - data["last_time"]
+            delta_s = self.walking_speed * dt
+            data["distance_walked"] += delta_s
+            data["last_time"] = current_time
             
-            # Giả định nếu vật thể nằm ở chính diện (góc nhỏ), lấy khoảng cách từ cảm biến siêu âm
-            # Nếu lệch biên, có thể ước lượng khoảng cách từ kích thước bbox (nâng cao)
-            d_current = current_distance / 100.0 # Đổi sang mét
-            
-            if track_id not in self.tracked_objects:
-                # Bước 1: Nhận diện đối tượng lần đầu (ví dụ quanh mốc ~ 5 mét như cô nói)
-                if 4.5 <= d_current <= 5.5:
-                    self.tracked_objects[track_id] = {
-                        "first_distance": d_current,
-                        "first_angle": angle,
-                        "accumulated_car_travel": 0.0,
+            if current_time - data["last_seen"] > 1.5:
+                del self.tracked_obstacles[track_id]
+
+        # 2. Phân tích vật cản từ dữ liệu YOLO
+        for det in detections:
+            if isinstance(det, dict):
+                x1, y1, x2, y2 = det["box"]
+                track_id = det.get("track_id", None)
+                cls_name = det["class"]
+            else:
+                x1, y1, x2, y2 = map(float, det.xyxy[0].cpu().numpy())
+                track_id = int(det.id[0].item()) if det.id is not None else None
+                cls_name = str(det.cls[0].item())
+
+            if track_id is None: 
+                continue
+
+            x_center = (x1 + x2) / 2.0
+            angle = (x_center - (self.image_width / 2.0)) * (self.fov_horizontal / self.image_width)
+            direction = self.get_direction_label(angle)
+
+            if track_id not in self.tracked_obstacles:
+                # Bắt đầu theo dõi ở tầm xa an toàn (khoảng 2.5m - 3.5m)
+                if 2.5 <= d_current_m <= 3.5:
+                    self.tracked_obstacles[track_id] = {
+                        "class": cls_name,
+                        "initial_dist": d_current_m,
+                        "direction": direction,
+                        "distance_walked": 0.0,
                         "last_time": current_time,
-                        "status": "INITIALIZED"
+                        "last_seen": current_time,
+                        "status": "TRACKING"
                     }
             else:
-                # Bước 2: Vật thể đã được lưu, tính quãng đường xe mình đã đi được (Delta s)
-                obj = self.tracked_objects[track_id]
-                dt = current_time - obj["last_time"]
-                delta_s = gps_speed * dt # Quãng đường xe mình đi được trong dt giây
-                obj["accumulated_car_travel"] += delta_s
-                obj["last_time"] = current_time
+                obj = self.tracked_obstacles[track_id]
+                obj["last_seen"] = current_time
+                obj["current_angle"] = angle
                 
-                # Bước 3: Khi xe mình đi được thêm cỡ 2 mét (sai số trong khoảng 1.8m - 2.2m)
-                if 1.8 <= obj["accumulated_car_travel"] <= 2.2 and obj["status"] == "INITIALIZED":
-                    expected_distance = obj["first_distance"] - obj["accumulated_car_travel"]
+                # Logic kiểm tra sau khi người mù đã đi tiếp được khoảng 1.5 mét
+                if 1.3 <= obj["distance_walked"] <= 1.7 and obj["status"] == "TRACKING":
+                    expected_dist = obj["initial_dist"] - obj["distance_walked"]
                     
-                    # So sánh khoảng cách đo thực tế d_current với khoảng cách lý thuyết expected_distance
-                    if abs(d_current - expected_distance) < 0.4: # Sai số cho phép 40cm
-                        obj["status"] = "STATIC_OBSTACLE" #(Vật cản tĩnh)
+                    # So sánh khoảng cách thực tế và khoảng cách lý thuyết
+                    if abs(d_current_m - expected_dist) < 0.35:
+                        obj["status"] = "STATIC"  
+                        obj["alert_phrase"] = f"Phat hien {obj['class']} co dinh, {direction}."
                     else:
-                        obj["status"] = "DYNAMIC_OBJECT" #(Vật thể di động)
+                        obj["status"] = "DYNAMIC" 
+                        obj["alert_phrase"] = f"Canh bao co {obj['class']} di dong, {direction}."
                         
-        return self.tracked_objects
+        return self.tracked_obstacles
