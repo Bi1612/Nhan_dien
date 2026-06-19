@@ -1,106 +1,48 @@
 import cv2
-import time
+import modules.shared_data as shared # Nơi chứa dữ liệu dùng chung (frame, detections)
+from modules.camera_thread import CameraThread # Luồng đọc webcam
+from modules.yolo_thread import YOLOThread       # Luồng chạy AI
 
-import modules.shared_data as shared
-
-from modules.camera_thread import CameraThread
-from modules.yolo_thread import YOLOThread
-from modules.sensor_thread import SensorThread
-from modules.gps_thread import GPSThread
-
-from modules.danger_zone import (
-    create_danger_zone,
-    draw_danger_zone
-)
-
-from modules.fcw import (
-    check_forward_collision
-)
-
+# 1. Khởi tạo: Bật camera và AI lên
 camera_thread = CameraThread()
 yolo_thread = YOLOThread()
-sensor_thread = SensorThread()
-gps_thread = GPSThread()
 
 camera_thread.start()
 yolo_thread.start()
-sensor_thread.start()
-gps_thread.start()
 
+print("🚀 Hệ thống đã sẵn sàng, đang chạy...")
+
+# 2. Vòng lặp chính (Cái này là "trái tim" của app)
 while True:
-
+    # Nếu chưa có ảnh từ camera thì đợi
     if shared.frame is None:
         continue
-
+    
+    # Copy ảnh từ luồng camera ra để vẽ
     frame = shared.frame.copy()
-
-    detections = shared.detections
-
-    danger_zone = create_danger_zone(
-        shared.gps_speed
-    )
-
-    draw_danger_zone(
-        frame,
-        danger_zone
-    )
-
-    fcw_status = check_forward_collision(
-        detections,
-        danger_zone,
-        shared.gps_speed,
-        shared.distance
-    )
-
-    for obj in detections:
-
-        x1, y1, x2, y2 = map(
-            int,
-            obj["box"]
-        )
-
-        cv2.rectangle(
-            frame,
-            (x1, y1),
-            (x2, y2),
-            (0, 255, 0),
-            2
-        )
-
-    cv2.putText(
-        frame,
-        f"FCW:{fcw_status}",
-        (20, 40),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 0, 255),
-        2
-    )
-
-    cv2.putText(
-        frame,
-        f"DIST:{shared.distance:.1f} cm",
-        (20, 80),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (255, 255, 0),
-        2
-    )
-
-    cv2.putText(
-        frame,
-        f"SPEED:{shared.gps_speed:.1f}",
-        (20, 120),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (255, 255, 0),
-        2
-    )
-
-    cv2.imshow(
-        "FCW",
-        frame
-    )
-
+    
+    # 3. Vẽ Bounding Box từ dữ liệu YOLO trả về
+    # shared.detections là danh sách các vật thể AI tìm được
+    for obj in shared.detections:
+        # Lấy tọa độ (x1, y1) là góc trái trên, (x2, y2) góc phải dưới
+        x1, y1, x2, y2 = map(int, obj["box"])
+        
+        # Vẽ hình chữ nhật xanh lá quanh vật thể
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        
+        # In tên vật thể lên trên khung
+        label = obj.get("class", "object")
+        cv2.putText(frame, label, (x1, y1-10), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    
+    # 4. Hiển thị kết quả lên màn hình HDMI 7 inch
+    cv2.imshow("Hệ thống Hỗ trợ người mù", frame)
+    
+    # Nhấn phím 'q' để thoát
     if cv2.waitKey(1) == ord("q"):
         break
+
+# Tắt luồng an toàn
+camera_thread.stop()
+yolo_thread.stop()
+cv2.destroyAllWindows()
