@@ -1,5 +1,5 @@
 import threading
-import time
+
 import cv2
 import modules.shared_data as shared
 from modules.detection import detect_objects
@@ -10,6 +10,7 @@ class YOLOThread(threading.Thread):
         self.daemon = True
 
     def run(self):
+        import time
         while shared.running:
             if shared.frame is None:
                 time.sleep(0.01)
