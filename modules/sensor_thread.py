@@ -28,7 +28,7 @@ class SensorThread(threading.Thread):
 
                 line = line.decode().strip()
 
-                data = line.split(",")
+                data = line.split(";")
 
                 if len(data) != 4:
                     continue
