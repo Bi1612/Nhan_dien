@@ -1,5 +1,4 @@
 import threading
-import serial
 import modules.shared_data as shared
 
 class SensorThread(threading.Thread):
@@ -8,25 +7,29 @@ class SensorThread(threading.Thread):
         self.daemon = True
 
     def run(self):
-        # KHẮC PHỤC TRIỆT ĐỂ: Ép nạp cục bộ thư viện time ngay tại đây
         import time 
         
-        # Đoạn này tùy thuộc vào cấu hình cổng Serial trên mạch Jetson của bạn
-        try:
-            ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=1)
-        except Exception as e:
-            print(f"[WARNING] Khong ket noi duoc cong Serial: {e}")
-            ser = None
+        print("[SENSOR INFO] Kích hoạt luồng giả lập cảm biến siêu nhẹ...")
+        
+        # Ép trạng thái nút bấm mặc định hoặc khoảng cách an toàn ban đầu
+        shared.distance = 100.0  # Mặc định khoảng cách an toàn là 100cm
+        
+        # Giả lập trạng thái nút bấm Mượn/Trả sách cho đồ án (nếu cần)
+        # Giả sử nút bấm chưa được nhấn (0 là chưa nhấn, 1 là nhấn)
+        if not hasattr(shared, 'borrow_pressed'):
+            shared.borrow_pressed = 0
+        if not hasattr(shared, 'return_pressed'):
+            shared.return_pressed = 0
 
         while shared.running:
-            if ser and ser.in_waiting > 0:
-                try:
-                    # Đọc dữ liệu khoảng cách siêu âm hoặc trạng thái nút bấm thủ công
-                    line = ser.readline().decode('utf-8').strip()
-                    if line.isdigit():
-                        shared.distance = float(line)
-                except Exception:
-                    pass
-            
-            # Sử dụng time an toàn không lo import chéo
-            time.sleep(0.05)
+            try:
+                # 🌟 GIẢ LẬP DỮ LIỆU ĐỂ GIẢI PHÓNG HỆ THỐNG
+                # Cứ mỗi vòng lặp, ta giữ nguyên khoảng cách an toàn 
+                shared.distance = 100.0
+                
+                # Biến này giúp giả lập dữ liệu liên tục mà CPU không bị chạy quá tải
+                # Tăng thời gian ngủ lên 0.2 giây để Jetson Nano thở, cực kỳ nhẹ máy!
+                time.sleep(0.2)
+                
+            except Exception:
+                time.sleep(0.5)
