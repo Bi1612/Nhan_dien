@@ -1,22 +1,26 @@
 import cv2
 import numpy as np
+import os
 
 # Giải pháp chạy YOLO bằng module học sâu DNN tích hợp sẵn của OpenCV
-# Chấp mọi loại lỗi thư viện hệ thống PyTorch/Ultralytics
 print("[AI ENGINE] Khởi động mô hình nhận diện bằng OpenCV DNN...")
 
-# Tải file cấu hình lượng tử hóa nhẹ cho Jetson Nano
-# (Nhóm đã lưu sẵn file cấu hình này trong project gốc)
-try:
-    net = cv2.dnn.readNet("yolov5n.ondnx", "yolov5n.onnx")
-except:
-    # Phương án dự phòng nếu nhóm bồ đang dùng file định dạng cũ .cfg/.weights
-    try:
-        net = cv2.dnn.readNet("models/yolov5n.weights", "models/yolov5n.cfg")
-    except:
-        # Nếu không tìm thấy file nào, ta dùng mô hình mặc định
-        net = None
-        print("[AI WARNING] Không tìm thấy file trọng số cục bộ.")
+# Định nghĩa đường dẫn file yolov5n.onnx nằm ngay trong thư mục modules
+model_path = os.path.join(os.path.dirname(__file__), "yolov5n.onnx")
+
+# Kiểm tra file cục bộ để nạp trực tiếp, không chạy vòng vèo
+if os.path.exists(model_path):
+    # SỬA LỖI: Đọc file ONNX chuẩn với 1 tham số duy nhất
+    net = cv2.dnn.readNet(model_path)
+    
+    # 🚀 KÍCH HOẠT NHÂN ĐỒ HỌA CUDA CHO JETSON NANO (Giúp khởi động và chạy siêu nhanh)
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+    
+    print(f"[AI INFO] Đã nạp thành công mô hình bằng CUDA: {model_path}")
+else:
+    net = None
+    print("[AI WARNING] Không tìm thấy file yolov5n.onnx cục bộ trong thư mục modules!")
 
 # Danh sách nhãn đối tượng COCO chuẩn
 CLASSES = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
@@ -24,7 +28,6 @@ CLASSES = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
 def detect_objects(frame):
     """
     Hàm nhận diện vật cản thời gian thực sử dụng OpenCV DNN thuần.
-    Trả về cấu trúc danh sách dictionary bám sát phân hệ shared_data.
     """
     detections = []
     if net is None:
@@ -36,7 +39,7 @@ def detect_objects(frame):
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (640, 640), swapRB=True, crop=False)
     net.setInput(blob)
     
-    # Ép xung chạy lấy kết quả từ các lớp đầu ra (Output Layers)
+    # Lấy kết quả từ các lớp đầu ra
     output_layers = net.getUnconnectedOutLayersNames()
     outputs = net.forward(output_layers)
     
@@ -51,7 +54,7 @@ def detect_objects(frame):
             if confidence > 0.40 and class_id < len(CLASSES):
                 cls_name = CLASSES[class_id]
                 
-                # Chỉ lọc quyét các class cản trở người đi bộ
+                # Chỉ lọc quét các class cản trở người đi bộ
                 if cls_name in ["person", "car", "motorcycle", "bicycle", "bus", "truck"]:
                     center_x = int(detect[0] * width)
                     center_y = int(detect[1] * height)
