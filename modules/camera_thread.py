@@ -16,6 +16,7 @@ class CameraThread(threading.Thread):
         self.running = True
 
     def run(self):
+        import time
         print("[INFO] Luồng Camera thu thập hình ảnh đã sẵn sàng...")
         while shared.running and self.running:
             ret, frame = self.cap.read()
