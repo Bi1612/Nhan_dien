@@ -4,7 +4,7 @@
 # Tệp tin: object_tracking_analyzer.py
 # ==============================================================================
 
-import time
+
 
 class BlindAssistantAnalyzer:
     def __init__(self):
@@ -19,6 +19,7 @@ class BlindAssistantAnalyzer:
         return "Chinh dien"
 
     def process_pedestrian_movement(self, detections, current_distance_cm):
+        import time
         current_time = time.time()
         d_current_m = current_distance_cm / 100.0  # Đổi sang mét
 
