@@ -9,12 +9,13 @@ from yoloDet import YoloTRT
 # ==========================================
 # IMPORT MODULES CẢM BIẾN & DỮ LIỆU CHIA SẺ
 # ==========================================
-# Đảm bảo các file này nằm đúng cấu trúc thư mục modules/
 try:
     from modules.sensor_thread import SensorThread
     import modules.shared_data as shared
+    # [TÌNH CHỈNH] Import thêm module âm thanh chạy ngầm đã tối ưu của Bi
+    from modules.audio_alert import play_voice_alert
 except ImportError as e:
-    print(f"Error: Không thể nhập module cảm biến. Hãy kiểm tra lại cấu trúc thư mục! Chi tiết: {e}")
+    print(f"Error: Không thể nhập module cảm biến/âm thanh. Hãy kiểm tra lại cấu trúc thư mục! Chi tiết: {e}")
     exit()
 
 # Cờ hiệu điều khiển luồng
@@ -24,7 +25,6 @@ shared.running = True
 # KÍCH HOẠT LUỒNG ĐỌC CẢM BIẾN (SERIAL)
 # ==========================================
 print("Đang khởi tạo luồng đọc cảm biến HC-SR04/IMU qua Serial...")
-# Chú ý: Đảm bảo cổng "/dev/ttyACM0" trong file sensor_thread.py là chính xác
 sensor_thread = SensorThread()
 sensor_thread.start() # Khởi chạy luồng chạy ngầm
 
@@ -63,21 +63,18 @@ COLORS = {
 # ==========================================
 # CAMERA VẬT LÝ (WEBCAM USB REAL-TIME)
 # ==========================================
-# Đảm bảo index (0, 1, 2) và backend V4L2 là chính xác
 cap = cv2.VideoCapture(0, cv2.CAP_V4L2) 
 
-# Độ phân giải xử lý (Giữ nguyên 416 để đảm bảo FPS cao trên Jetson)
+# Độ phân giải xử lý
 FRAME_WIDTH = 416
 FRAME_HEIGHT = 416
 
-# Thiết lập cấu hình trực tiếp cho phần cứng Webcam USB
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Giảm lag
 
 if not cap.isOpened():
     print("Error: Không thể kết nối với Webcam USB. Hãy kiểm tra lại cổng cắm!")
-    # Dừng luồng cảm biến nếu lỗi camera
     shared.running = False
     sensor_thread.stop()
     exit()
@@ -86,7 +83,7 @@ if not cap.isOpened():
 # TẠO CỬA SỔ HIỂN THỊ CÓ THỂ CO GIÃN (FULLSCREEN)
 # ==========================================
 WINDOW_NAME = "Blind Support AI Dashboard v1.2"
-cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL) # Cho phép thay đổi kích thước cửa sổ
+cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
 
 # ==========================================
 # WARMUP
@@ -100,6 +97,12 @@ if ret:
 print("Warmup completed. Bắt đầu nhận diện & đo khoảng cách thực tế!")
 
 # ==========================================
+# [TINH CHỈNH] KHỞI TẠO BIẾN THỜI GIAN CHẶN ÂM THANH
+# Đặt ngay trước vòng lặp while để tránh robot nói đè, nói vấp liên tục
+# ==========================================
+last_audio_time = 0
+
+# ==========================================
 # MAIN LOOP
 # ==========================================
 while True:
@@ -110,11 +113,11 @@ while True:
         break
         
     frame = imutils.resize(frame, width=FRAME_WIDTH)
+    current_time = time.time() # Lấy mốc thời gian thực hiện tại
     
     # ==========================================
     # LẤY DỮ LIỆU CẢM BIẾN MỚI NHẤT (TỪ SHARED DATA)
     # ==========================================
-    # Giá trị này được cập nhật liên tục bởi sensor_thread chạy ngầm
     current_physical_distance = shared.distance 
     
     # ==========================================
@@ -128,9 +131,8 @@ while True:
     danger_detected = False
     
     # --- ĐIỀU KIỆN 1: CẢNH BÁO DỰA TRÊN SENSOR (KHOẢNG CÁCH THỰC TẾ) ---
-    # Ví dụ: Nếu vật cản ở quá gần, dưới 50cm (ngưỡng này bạn tùy chỉnh)
     SENSOR_DANGER_THRESHOLD_CM = 50 
-    if current_physical_distance < SENSOR_DANGER_THRESHOLD_CM and current_physical_distance > 1: # Tránh giá trị lỗi 0-1cm
+    if current_physical_distance < SENSOR_DANGER_THRESHOLD_CM and current_physical_distance > 1:
         danger_detected = True
     
     # Ngưỡng chiều cao của Bounding Box nguy hiểm (H pixel trên tổng 416 pixel)
@@ -171,19 +173,28 @@ while True:
         )
 
     # ==========================================
-    # HỢP NHẤT LOGIC CẢNH BÁO CHO NGƯỜI MÙ
+    # HỢP NHẤT LOGIC CẢNH BÁO VÀ PHÁT ÂM THANH CHO NGƯỜI MÙ
     # ==========================================
-    # Trạng thái DANGER kích hoạt nếu THỎA MÃN MỘT TRONG HAI điều kiện (Vision hoặc Sensor)
     if danger_detected:
         status = "DANGER"
         status_long = "OBSTACLE NEAR"
         status_color = (0, 0, 255)  # Màu đỏ nguy hiểm
+        
+        # [TINH CHỈNH] Cứ sau 3 giây nếu vẫn ĐỎ nguy hiểm thì nhắc nhở to, rõ ràng qua loa
+        if current_time - last_audio_time > 3:
+            play_voice_alert("Nguy hiểm. Dừng lại.")
+            last_audio_time = current_time
     else:
         total_objects = sum(counts.values())
         if total_objects > 0:
             status = "CAUTION"
             status_long = "OBJECTS AHEAD"
             status_color = (0, 165, 255)  # Màu cam chú ý
+            
+            # [TINH CHỈNH] Vật ở xa tầm nhìn, 5 giây mới nhắc một lần để đỡ đau đầu
+            if current_time - last_audio_time > 5:
+                play_voice_alert("Chú ý. Phía trước có vật cản.")
+                last_audio_time = current_time
         else:
             status = "CLEAR"
             status_long = "SAFE TO GO"
@@ -195,11 +206,10 @@ while True:
     latency = (end_time - start_time) * 1000
         
     # ==========================================
-    # [CẬP NHẬT] DEBUG DASHBOARD GỌN GÀNG (TÍCH HỢP SENSOR)
+    # DEBUG DASHBOARD GỌN GÀNG (TÍCH HỢP SENSOR)
     # ==========================================
     H, W, _ = frame.shape
     
-    # Vẽ panel nền đen gọn gàng (Nới rộng một chút để đủ chỗ in khoảng cách)
     cv2.rectangle(frame, (0, 0), (120, 290), (0, 0, 0), -1)
     
     panel_font_scale = 0.5
@@ -208,10 +218,10 @@ while True:
     cv2.putText(frame, f"FPS: {fps:.1f}", (panel_text_x, 20), cv2.FONT_HERSHEY_SIMPLEX, panel_font_scale, (0, 255, 0), 1)
     cv2.putText(frame, f"Lat: {latency:.1f}ms", (panel_text_x, 40), cv2.FONT_HERSHEY_SIMPLEX, panel_font_scale, (0, 255, 0), 1)
     
-    # --- [MỚI] Hiển thị khoảng cách thực tế từ cảm biến HC-SR04 ---
-    sensor_text_color = (255, 255, 255) # Mặc định trắng
+    # Hiển thị khoảng cách thực tế từ cảm biến HC-SR04
+    sensor_text_color = (255, 255, 255)
     if current_physical_distance < SENSOR_DANGER_THRESHOLD_CM:
-        sensor_text_color = (0, 0, 255) # Đỏ nếu quá gần
+        sensor_text_color = (0, 0, 255)
         
     cv2.putText(frame, f"Dist: {current_physical_distance:.1f} cm", (panel_text_x, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.5, sensor_text_color, 1)
     
@@ -229,9 +239,9 @@ while True:
     # ==========================================
     # TIMESTAMP & SYSTEM NAME
     # ==========================================
-    current_time = datetime.now().strftime("%H:%M:%S")
+    current_time_str = datetime.now().strftime("%H:%M:%S")
     W_time = W - 80 if W > 80 else 10
-    cv2.putText(frame, current_time, (W_time, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(frame, current_time_str, (W_time, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
     system_name = "BLIND GUIDANCE v1.2 (AI+Sens)"
     H_sys = H - 15 if H > 15 else 10
@@ -244,7 +254,9 @@ while True:
     cv2.imshow(WINDOW_NAME, frame)
     
     key = cv2.waitKey(1)
-    time.sleep(0.001) # Tránh chiếm dụng 100% CPU
+    # [TINH CHỈNH] Tăng thời gian ngủ lên một chút (từ 0.001 lên 0.005 giây) 
+    # Giúp Jetson Nano hạ nhiệt độ CPU, triệt tiêu hiện tượng lag giật dẫn đến sập cổng USB Arduino lúc chạy lâu!
+    time.sleep(0.005) 
     
     if key == ord('f'):
         is_fullscreen = cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN)
@@ -259,7 +271,6 @@ while True:
 # ==========================================
 # RELEASE & CLEANUP
 # ==========================================
-# Quan trọng: Dừng luồng cảm biến trước khi thoát
 shared.running = False
 sensor_thread.stop()
 cap.release()
