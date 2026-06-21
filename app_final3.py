@@ -107,12 +107,14 @@ last_audio_time = 0
 # MAIN LOOP
 # ==========================================
 while True:
+    # CODE MỚI ĐÃ SỬA CHỐNG SẬP CỦA BI:
     start_time = time.time()
     ret, frame = cap.read()
     if not ret:
-        print("Error: Mất tín hiệu từ Webcam USB!")
-        break
-        
+        print("[Warning] Mất khung hình từ Webcam, đang thử kết nối lại...")
+        time.sleep(0.1) # Chờ 0.1 giây cho cổng USB ổn định lại điện áp
+        continue        # Bỏ qua vòng lặp này, quay lên đọc lại frame mới chứ KHÔNG THOÁT NỮA
+   
     frame = imutils.resize(frame, width=FRAME_WIDTH)
     current_time = time.time() 
     
