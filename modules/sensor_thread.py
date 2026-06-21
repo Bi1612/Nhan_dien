@@ -20,7 +20,7 @@ class SensorThread(threading.Thread):
 
     def run(self):
         
-        # [TINH CHỈNH] Xóa sạch bộ đệm tồn đọng ngay khi vừa khởi động luồng
+        # Xóa sạch bộ đệm tồn đọng ngay khi vừa khởi động luồng
         try:
             self.ser.reset_input_buffer()
         except:
@@ -29,17 +29,17 @@ class SensorThread(threading.Thread):
         while shared.running:
 
             try:
-                # [TINH CHỈNH] CHỐNG TRÀN BUFFER
-                # Nếu Jetson Nano xử lý YOLO quá lâu làm dữ liệu Serial bị dồn ứ (> 100 ký tự)
-                # Ta chủ động xóa toàn bộ để ép hệ thống đọc gói tin mới nhất ở thời gian thực
+                # CHỐNG TRÀN BUFFER (Sửa lỗi treo lệnh cat / đen màn hình screen)
+                # Nếu Jetson Nano bận xử lý YOLO làm dữ liệu Serial bị dồn ứ quá nhiều (> 100 ký tự)
+                # Ta chủ động xóa sạch để ép hệ thống đọc gói tin mới nhất ở thời gian thực
                 if self.ser.in_waiting > 100:
                     self.ser.reset_input_buffer()
 
                 line = self.ser.readline()
                 
-                # [TINH CHỈNH] SỬA LỖI DECODE CHUỖI
-                # Thêm errors='ignore' để nếu dòng đầu tiên bị mất byte hoặc dính ký tự rác
-                # thì luồng không bị crash ngầm xuống khối except khiến khoảng cách bị kẹt ở 999
+                # SỬA LỖI DECODE CHUỖI
+                # Thêm errors='ignore' để nếu khung hình đầu bị mất byte hoặc dính ký tự rác
+                # thì luồng không bị nhảy xuống khối except (không bị kẹt ở số 999)
                 line = line.decode('utf-8', errors='ignore').strip()
 
                 data = line.split(",")
@@ -52,13 +52,13 @@ class SensorThread(threading.Thread):
                 ay = float(data[2])
                 az = float(data[3])
 
-                # [TINH CHỈNH] BỘ LỌC THÔNG THẤP (LOW-PASS FILTER) CHO HC-SR04
+                # BỘ LỌC THÔNG THẤP (LOW-PASS FILTER) LÀM MƯỢT KHOẢNG CÁCH
                 # Nếu dữ liệu thô gửi lên là mã lỗi (999) hoặc hệ thống chưa có dữ liệu ban đầu thì gán thẳng
                 if shared.distance is None or shared.distance == 0 or shared.distance == 999.0 or raw_distance == 999.0:
                     shared.distance = raw_distance
                 else:
-                    # Nếu là khoảng cách thực tế, bộ lọc giữ lại 80% độ ổn định của khung hình cũ
-                    # và bù thêm 20% thay đổi của khung hình mới để làm mượt, triệt tiêu xung nhiễu nhảy số
+                    # Bộ lọc giữ lại 80% độ ổn định của khung hình cũ
+                    # và bù thêm 20% thay đổi của khung hình mới để triệt tiêu xung nhiễu nhảy số
                     shared.distance = (0.8 * shared.distance) + (0.2 * raw_distance)
 
                 shared.ax = ax
