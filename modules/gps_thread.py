@@ -40,3 +40,7 @@ class GPSThread(threading.Thread):
             
             # Nghỉ 1 giây mỗi chu kỳ để bảo vệ tài nguyên CPU, chống đơ lag máy
             time.sleep(1.0)
+
+    # === HÀM FIX LỖI CỦA BI ===
+    def stop(self):
+        pass
